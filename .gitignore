@@ -1,2 +1,7 @@
 .ipynb_checkpoints/
 __pycache__
+.idea
+draft*
+data/*
+Checkpoints*
+*.pkl

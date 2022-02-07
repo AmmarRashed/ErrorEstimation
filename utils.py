@@ -1,12 +1,17 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from keras.callbacks import EarlyStopping
-from keras.layers import Conv1D, Dense, Flatten, MaxPool1D
+import pandas as pd
+from keras.layers import Dense, Input
 from keras.models import Model
 from keras.optimizers import adam_v2
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_absolute_percentage_error
+from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.optimizers.schedules import ExponentialDecay
+from tensorflow.keras.utils import set_random_seed
+
+set_random_seed(42)
 
 
 def plot_loss(history):
@@ -18,115 +23,90 @@ def plot_loss(history):
     plt.grid(True)
 
 
-def construct_continent_model(x, activation="relu"):
-    c = Conv1D(64, 4, strides=2, padding="same", name="Conv1D_1_c")(x)
-    c = MaxPool1D(name="MaxPooling_1_c", padding="same")(c)
-    c = Conv1D(32, 4, strides=1, padding="same", name="Conv1D_2")(c)
-    c = MaxPool1D(name="MaxPooling_2_c", padding="same")(c)
-    c = Flatten(name="Flatten_c")(c)
+def annotate_bars(ax, horizontal=True, scale=1):
+    for p in ax.patches:
+        if horizontal:
+            xpos = p.get_width() + p.get_width() * 0.01 * scale
+            ax.annotate(f"{round(p.get_width(), 3)}", (xpos, p.get_y() + 0.1), fontsize=14)
+        else:
+            ypos = p.get_height() + p.get_height() * 0.01 * scale
+            ax.annotate(f"{round(p.get_height(), 3)}", (p.get_x() + p.get_width() / 2, ypos), fontsize=14)
+    return ax
 
-    h = Dense(64, activation=activation, name="Hiddenlayer1_c")(c)
-    h = Dense(32, activation=activation, name="Hiddenlayer2_c")(h)
 
-    fc = Dense(32, activation=activation, name="Hiddenlayer3_local")(h)
-    fc = Dense(8, activation=activation, name="Hiddenlayer4_local")(fc)
-    fc = Dense(4, activation=activation, name="Hiddenlayer5_local")(fc)
-    fc = Dense(2, activation=activation, name="Hiddenlayer6_local")(fc)
-    out = Dense(1, name="Hiddenlayer7_local")(fc)
+def plot_performance(reports, features=["MAPE", "RMSE", "R2"]):
+    plt.figure(figsize=(16, 9))
+    performance = pd.DataFrame(reports).T[features]
+    ax = performance.plot(kind="barh", figsize=(16, 9), fontsize=16)
+    ax = annotate_bars(ax, horizontal=True)
+    plt.show()
+
+
+def evaluation_report(y, yhat):
+    mape = mean_absolute_percentage_error(y, yhat)
+    rmse = np.sqrt(mean_squared_error(y, yhat))
+    r2 = r2_score(y, yhat)
+    return mape, rmse, r2
+
+
+def rmse(y, yhat):
+    return np.sqrt(mean_squared_error(y, yhat))
+
+
+def parse_data(X, y):
+    n = len(X) // 10
+    X_dev, X_test, y_dev, y_test = train_test_split(X, y, test_size=n, random_state=42)
+    X_train, X_val, y_train, y_val = train_test_split(X_dev, y_dev, test_size=n, random_state=42)
+
+    scaler = MinMaxScaler()
+    scaler.fit(X_train)
+    X_train = scaler.transform(X_train)
+    X_val = scaler.transform(X_val)
+    X_test_scaled = scaler.transform(X_test)
+    X_dev_scaled = scaler.transform(X_dev)
+    return (X_train, y_train), (X_val, y_val), (X_test, y_test), (X_dev, y_dev), (X_dev_scaled, X_test_scaled)
+
+
+def build_model(shape=8, lr=0.0001, activation="relu", out_activation=None):
+    x = Input(shape=(shape))
+    h = Dense(32, activation=activation)(x)
+    h = Dense(16, activation=activation)(h)
+    h = Dense(8, activation=activation)(h)
+    h = Dense(4, activation=activation)(h)
+    h = Dense(2, activation=activation)(h)
+    out = Dense(1, activation=out_activation)(h)
 
     model = Model(inputs=x, outputs=out)
-    return model, h
+
+    lr_schedule = ExponentialDecay(
+        lr,
+        decay_steps=10000,
+        decay_rate=0.96,
+        staircase=True)
+
+    model.compile(loss="mse", optimizer=adam_v2.Adam(learning_rate=lr_schedule))
+    return model
 
 
-def construct_local_model(x, activation="relu"):
-    c = Conv1D(32, 4, strides=2, padding="same", name="Conv1D_1")(x)
-    c = Conv1D(32, 4, strides=1, padding="same", name="Conv1D_2")(c)
-    c = MaxPool1D(name="MaxPooling", padding="same")(c)
-    c = Flatten(name="Flatten")(c)
-
-    h = Dense(512, activation=activation, name="Hiddenlayer1_local")(c)
-    h = Dense(64, activation=activation, name="Hiddenlayer2_local")(h)
-    h = Dense(32, activation=activation, name="Hiddenlayer3_local")(h)
-
-    fc = Dense(32, activation=activation, name="Hiddenlayer4_local")(h)
-    fc = Dense(16, activation=activation, name="Hiddenlayer5_local")(fc)
-    fc = Dense(5, activation=activation, name="Hiddenlayer6_local")(fc)
-    fc = Dense(2, activation=activation, name="Hiddenlayer7_local")(fc)
-    out = Dense(1, name="Hiddenlayer8_local")(fc)
-
-    model = Model(inputs=x, outputs=out)
-    return model, h
+def calc_rmse(y, yhat):
+    return np.sqrt(mean_squared_error(y, yhat))
 
 
-def fit_model(model, X_train, y_train, X_val, y_val, bs=10000, lr=0.001, epochs=400):
-    es = EarlyStopping(
-        monitor="val_loss",
-        min_delta=0,
-        patience=30,
-        verbose=0,
-        mode="auto",
-        baseline=None,
-        restore_best_weights=True,
-    )
-    model.compile(loss="mse", optimizer=adam_v2.Adam(lr))
-    return model.fit(X_train, y_train, callbacks=[es], validation_data=(X_val, y_val), epochs=epochs, batch_size=bs)
+def evaluate_model(model, X, y, scaler=None):
+    y_pred = model.predict(X)
+    if scaler is not None:
+        y_pred = scaler.inverse_transform(y_pred.reshape(-1, 1)).flatten()
+        y = scaler.inverse_transform(y.reshape(-1, 1)).flatten()
+    return r2_score(y, y_pred), calc_rmse(y, y_pred)
 
 
-def rmse(y_true, y_pred):
-    return np.sqrt(mean_squared_error(y_true, y_pred))
-
-
-def get_error(y_true, y_pred):
-    # return np.square(y_true - y_pred)
-    return y_true - y_pred
-
-
-class Utils:
-    def __init__(self, path):
-        self.path = path
-        f = np.load(path, allow_pickle=True)
-        self.X_train = f["X_train"]
-        self.y_train = f["y_train"] / 1e6
-        self.cont_train = f["cont_train"]
-
-        self.X_test = f["X_train"]
-        self.y_test = f["y_train"] / 1e6
-        self.cont_test = f["cont_test"]
-        self.f = f
-
-    def get_train_val(self, continent=0):
-        idx = np.where(self.cont_train == continent)[0]
-        x_ = self.X_train[idx, :]
-        y_ = self.y_train[idx]
-        X_train_raw, X_val_raw, y_train, y_val = train_test_split(
-            x_, y_, test_size=0.1, random_state=42)
-
-        scaler = MinMaxScaler()
-        scaler.fit(X_train_raw)
-
-        X_train = scaler.transform(X_train_raw)
-        X_val = scaler.transform(X_val_raw)
-
-        return X_train, y_train, X_val, y_val, scaler
-
-    def train_model(self, model, continent, bs=10000, lr=0.001, epochs=400):
-        X_train, y_train, X_val, y_val, scaler = self.get_train_val(continent)
-        return fit_model(model, X_train, y_train, X_val, y_val, bs=bs, lr=lr, epochs=epochs)
-
-    def predict_test(self, model, continent):
-        _, _, _, _, scaler = self.get_train_val(continent)
-
-        idx = np.where(self.cont_test == continent)[0]
-        x_ = self.X_test[idx, :]
-        y_true = self.y_test[idx]
-        x = scaler.transform(x_)
-
-        y_pred = model.predict(x).flatten()
-        return y_true, y_pred
-
-    def predict_train_val(self, model, continent):
-        X_train, y_train, X_val, y_val, scaler = self.get_train_val(continent)
-        y_pred_train = model.predict(X_train).flatten()
-        y_pred_val = model.predict(X_val).flatten()
-
-        return y_train, y_pred_train, y_val, y_pred_val
+def te_report(model,
+              X_train, y_train,
+              X_val, y_val,
+              X_test, y_test):
+    results = []
+    for name, (X_, y_) in zip(["Train", "Val.", "Test"], [(X_train, y_train), (X_val, y_val), (X_test, y_test)]):
+        r2, rmse = evaluate_model(model, X_, y_)
+        results.append([name, r2, rmse])
+    results_df = pd.DataFrame(results, columns=["Data", "R2", "RMSE"])
+    return results_df
