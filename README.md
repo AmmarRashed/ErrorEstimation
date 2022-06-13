@@ -1,9 +1,7 @@
 # A Novel Method to Estimate Measurement Error in AI-Assisted Measurements
-
-A framework to estimate the error of machine learning models on a sample level.
+- [paper](https://www.researchgate.net/publication/360833127_A_Novel_Method_to_Estimate_Measurement_Error_in_AI-Assisted_Measurements)
+- A framework to estimate the error of machine learning models on a sample level.
 ![](framework.png)
-
-[paper](https://www.researchgate.net/publication/360833127_A_Novel_Method_to_Estimate_Measurement_Error_in_AI-Assisted_Measurements)
 
 # Requirements
 
